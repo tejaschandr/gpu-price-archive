@@ -1,0 +1,176 @@
+name: archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma-separated sources (blank = all), e.g. kalshi"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths: ["cim/**", "tests/**", ".github/workflows/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Code changes only arrive by push, which is tested; data runs reuse that result (saves ~20% of
+    # billed minutes: every job bills at least a minute).
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -v
+
+  archive:
+    needs: test
+    # Only from main of the private repo: never on another branch or in the public code-only copy.
+    if: ${{ !cancelled() && github.event_name != 'push' && github.ref == 'refs/heads/main' && needs.test.result != 'failure'
+      && github.repository == 'tejaschandr/compute-index-monitor' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # On the job, not the workflow: GitHub cancels an already-pending run when another joins the
+    # same group, so a shared group would let a code push's test run cancel a pending data run.
+    concurrency:
+      group: archive
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Collect
+        env:
+          VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
+          SCHEDULE: ${{ github.event.schedule }}
+          ONLY: ${{ inputs.only }}
+        # Exit 2 (degraded) or 1 (nothing fetched) turns the job red; later steps still run.
+        run: |
+          if [ "$SCHEDULE" = "7 */3 * * *" ]; then ONLY=kalshi; fi
+          python -m cim.run --data-dir data ${ONLY:+--only "$ONLY"}
+      - name: Verify archive
+        if: always()
+        # Integrity of every file and table, plus freshness: each schedule fails if the other stopped.
+        run: python -m cim.verify --data-dir data --fresh
+      - name: Commit snapshot
+        if: always()
+        run: |
+          git config user.name "compute-index-monitor[bot]"
+          git config user.email "compute-index-monitor@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "archive: $(date -u +%Y-%m-%dT%H:%MZ)"
+            # A commit pushed since checkout would reject the push; rebase and retry. Runs are
+            # serialized (concurrency group), so only a manual push can race this.
+            for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 10; done
+          fi
+
+  # Timestamp proofs. The OpenTimestamps client is third-party code, so it runs in a job with a
+  # read-only token and no secrets; a separate job, running only git, commits its output.
+  anchor:
+    needs: archive
+    if: ${{ !cancelled() && needs.archive.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Stamp the chain head and upgrade pending proofs
+        run: |
+          pip install --quiet --only-binary=:all: --require-hashes -r .github/ots-requirements.txt
+          ots stamp "$(python -m cim.anchor --data-dir data)"
+          for f in $(python -m cim.anchor --data-dir data --pending); do ots upgrade "$f" || true; done
+          rm -f data/anchors/*.ots.bak  # ots upgrade keeps the old proof as .bak
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: anchors
+          path: data/anchors/
+          retention-days: 7
+
+  # Commits the proofs, then opens, updates or closes the alert issue. Only git and this repo's code
+  # run here. One job, not two: every job bills at least a minute.
+  anchor-commit:
+    needs: [archive, anchor]
+    if: ${{ always() && needs.archive.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: archive
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.anchor.result == 'success'
+        with:
+          name: anchors
+          path: data/anchors/
+      - name: Check and commit proofs
+        id: commit
+        if: needs.anchor.result == 'success'
+        run: |
+          python -m cim.verify --data-dir data  # never commit a proof that doesn't match its anchor
+          git config user.name "compute-index-monitor[bot]"
+          git config user.email "compute-index-monitor@users.noreply.github.com"
+          git add data/anchors
+          if git diff --cached --quiet; then echo "no changes"; exit 0; fi
+          git commit -m "anchor: $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 10; done
+
+      # One open issue while anything is wrong, updated each run with what broke; closed when healthy.
+      # GitHub emails the repo owner on every issue update.
+      - name: Open, update or close the alert issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+          TITLE: "Archive needs attention"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set +e
+          python -m cim.status --data-dir data > report.md
+          healthy=$?
+          set -e
+          if [ "${{ needs.archive.result }}" != "success" ] || [ "${{ steps.commit.outcome }}" = "failure" ]; then
+            healthy=1
+            printf -- '- a job failed: archive=%s anchor=%s anchor-commit=%s\n' \
+              "${{ needs.archive.result }}" "${{ needs.anchor.result }}" "${{ steps.commit.outcome }}" >> report.md
+          fi
+          printf '\nRun: %s\n' "$RUN_URL" >> report.md
+          open=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number -q '.[0].number')
+          if [ "$healthy" != 0 ]; then
+            if [ -n "$open" ]; then gh issue comment "$open" --body-file report.md
+            else gh issue create --title "$TITLE" --body-file report.md; fi
+          elif [ -n "$open" ]; then
+            gh issue close "$open" --comment "Healthy again: $RUN_URL"
+          fi
+          # Dead-man's switch outside GitHub: healthchecks.io emails you if pings stop arriving,
+          # which catches the one failure nothing in here can see (no runs at all). Optional.
+          if [ -n "$HEALTHCHECK_URL" ]; then
+            if [ "$healthy" = 0 ]; then suffix=""; else suffix="/fail"; fi
+            curl -fsS -m 10 --retry 3 -o /dev/null "$HEALTHCHECK_URL$suffix" || true
+          fi

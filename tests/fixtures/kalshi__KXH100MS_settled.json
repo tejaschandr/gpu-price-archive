@@ -1,0 +1,53 @@
+{
+ "cursor": "",
+ "markets": [
+  {
+   "event_ticker": "KXH100MS-26AUG",
+   "ticker": "KXH100MS-26AUG-T2.50",
+   "floor_strike": 2.5,
+   "expiration_value": "2.77",
+   "result": "yes",
+   "settlement_ts": "2026-09-01T15:00:00Z"
+  },
+  {
+   "event_ticker": "KXH100MS-26AUG",
+   "ticker": "KXH100MS-26AUG-T2.75",
+   "floor_strike": 2.75,
+   "expiration_value": "2.77",
+   "result": "yes",
+   "settlement_ts": "2026-09-01T15:00:00Z"
+  },
+  {
+   "event_ticker": "KXH100MS-26AUG",
+   "ticker": "KXH100MS-26AUG-T3.00",
+   "floor_strike": 3.0,
+   "expiration_value": "2.77",
+   "result": "no",
+   "settlement_ts": "2026-09-01T15:00:00Z"
+  },
+  {
+   "event_ticker": "KXH100MS-26SEP",
+   "ticker": "KXH100MS-26SEP-T2.50",
+   "floor_strike": 2.5,
+   "expiration_value": "2.83",
+   "result": "yes",
+   "settlement_ts": "2026-10-01T15:00:00Z"
+  },
+  {
+   "event_ticker": "KXH100MS-26SEP",
+   "ticker": "KXH100MS-26SEP-T2.75",
+   "floor_strike": 2.75,
+   "expiration_value": "2.83",
+   "result": "yes",
+   "settlement_ts": "2026-10-01T15:00:00Z"
+  },
+  {
+   "event_ticker": "KXH100MS-26SEP",
+   "ticker": "KXH100MS-26SEP-T3.00",
+   "floor_strike": 3.0,
+   "expiration_value": "2.83",
+   "result": "no",
+   "settlement_ts": "2026-10-01T15:00:00Z"
+  }
+ ]
+}
