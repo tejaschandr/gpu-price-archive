@@ -55,7 +55,7 @@ class TestCollect(_Base):
         self.assertEqual(sum(net.calls.values()), expected)  # one request per page
         self.assertTrue(all(f.get("sha256") and f["status"] == 200 for f in m["fetches"]))
         self.assertEqual(m["degraded"], [])
-        self.assertEqual(len(rows(self.root, "observations")), 12)  # ornn 4, silicondata 6, semianalysis 2
+        self.assertEqual(len(rows(self.root, "observations")), 13)  # ornn 5, silicondata 6, semianalysis 2
         self.assertEqual(len(rows(self.root, "kalshi_settlements")), 2)
         self.assertEqual(verify.verify(self.root), [])
         self.assertIn("**+$0.32/GPU-hr** on 2026-10-13", (self.root / "LATEST.md").read_text())
@@ -215,7 +215,7 @@ class TestFailures(_Base):
                 self.assertNotIn("sha256", f)
                 self.assertIn(f"HTTP {code}", f["error"])
                 self.assertEqual(net.calls["semianalysis"], 1)  # HTTP errors are never retried
-                self.assertEqual(len(rows(self.root, "observations")), 10)
+                self.assertEqual(len(rows(self.root, "observations")), 11)
                 self.assertEqual(verify.verify(self.root), [])
 
     def test_everything_down(self):
@@ -310,3 +310,15 @@ class TestSettlementSourceAudit(_Base):
         run_offline(self.root, FakeNet({url: ornn_history("H100 SXM", 3.18)}), start="2026-10-13T21:47:00Z")
         self.assertIn("Ornn page differs from its settlement source (dashboard): [('OCPI-H100', '2026-10-13')]",
                       audit.audit(self.root, 24, now)[0])
+
+
+class TestAuditPageLooks(_Base):
+    def test_only_a_bad_latest_look_fails(self):
+        now = datetime(2026, 10, 14, 23, tzinfo=timezone.utc)
+        bad = FakeNet({silicondata.BASE.format(slug="h100"): live("silicondata__h100.html").replace(b"aria-pressed=", b"aria-selected=")})
+        run_offline(self.root, bad, start="2026-10-14T21:37:00Z")
+        self.assertIn("pages not ok on their latest look", audit.audit(self.root, 24, now)[0][0])
+        run_offline(self.root, start="2026-10-14T22:37:00Z")
+        fail, info = audit.audit(self.root, 24, now)
+        self.assertEqual(fail, [])
+        self.assertTrue(any(i.startswith("1 earlier page looks not ok, since read ok (e.g. h100") for i in info))

@@ -32,7 +32,15 @@ class TestOrnn(unittest.TestCase):
         rows, problems = ornn.parse("home", self.BODY, ornn.PAGE_URL)
         got = {r["series_id"]: (r["price_usd_per_gpu_hr"], r["as_of"]) for r in rows["observations"]}
         self.assertEqual(got, {"OCPI-H100": ("3.1700", "2026-10-13"), "OCPI-H200": ("5.5100", "2026-10-13"),
-                               "OCPI-B200": ("7.8300", "2026-10-13"), "OCPI-A100": ("0.9600", "2026-10-13")})
+                               "OCPI-B200": ("7.8300", "2026-10-13"), "OCPI-A100": ("0.9600", "2026-10-13"),
+                               "OCPI-RTX6K": ("1.4000", "2026-10-13")})
+        self.assertEqual(problems, [])
+
+    def test_layout_before_2026_10_19_still_parses(self):
+        """Archived snapshots must rebuild unchanged: the 4-GPU page without 7-day changes."""
+        rows, problems = ornn.parse("home", live("ornn__home_20261013.html"), ornn.PAGE_URL)
+        self.assertEqual({r["series_id"]: r["price_usd_per_gpu_hr"] for r in rows["observations"]},
+                         {"OCPI-H100": "3.1700", "OCPI-H200": "5.5100", "OCPI-B200": "7.8300", "OCPI-A100": "0.9600"})
         self.assertEqual(problems, [])
 
     def test_conflicting_copies_drop_the_gpu(self):

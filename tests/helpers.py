@@ -29,7 +29,7 @@ def ornn_history(gpu: str, value: float, days: int = 61, end: str = "2026-10-13"
     return json.dumps({"success": True, "gpu_type": gpu, "access": "public-3mo", "data": pts}).encode()
 
 
-ORNN_PAGE = {"H100 SXM": 3.17, "H200": 5.51, "B200": 7.83, "A100 SXM4": 0.96, "RTX 5090": 0.40}
+ORNN_PAGE = {"H100 SXM": 3.17, "H200": 5.51, "B200": 7.83, "A100 SXM4": 0.96, "RTX 5090": 0.40, "RTX PRO 6000 WS": 1.40}
 
 
 def live(name: str) -> bytes:
@@ -45,7 +45,7 @@ def live_bodies() -> dict[str, bytes]:
     for r in kalshi.requests()[0] + kalshi_settled.requests()[0]:
         f = LIVE / f"kalshi__{r.name}.json"
         b[r.url] = f.read_bytes() if f.exists() else EMPTY_MARKETS
-    for g in ornn.HISTORY_GPUS:
+    for g in ornn.HISTORY_GPUS.values():
         b[ornn.HISTORY_URL.format(gpu=quote(g))] = ornn_history(g, ORNN_PAGE[g])
     for slug in getdeploying.SLUGS:
         b[getdeploying.URL.format(slug=slug)] = GD_H100.read_bytes().replace(b"nvidia-h100,", slug.encode() + b",")

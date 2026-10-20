@@ -35,9 +35,16 @@ def audit(root: Path, hours: int, now: datetime) -> tuple[list[str], list[str]]:
     ms = [m for m in store.read_manifests(root) if m["started_at_utc"] >= since]
     failed = sum(1 for m in ms for f in m["fetches"] if f.get("error"))
     info.append(f"last {hours}h: {len(ms)} runs, {sum(len(m['fetches']) for m in ms)} fetches, {failed} failed")
-    bad = [r for r in store.read_table(root, "coverage") if r["outcome"] != "ok" and r["observed_at_utc"] >= since]
+    # Fail only while a page's latest look is bad: a vendor serving a broken page once (a deploy in
+    # progress) is recorded in coverage and listed here, but recovered on the next look.
+    recent = [r for r in store.read_table(root, "coverage") if r["observed_at_utc"] >= since]
+    latest = {(r["source"], r["name"]): r for r in recent}
+    bad = [r for r in latest.values() if r["outcome"] != "ok"]
     if bad:
-        fail.append(f"{len(bad)} page looks not ok, e.g. {bad[0]['name']} {bad[0]['outcome']} at {bad[0]['observed_at_utc']}")
+        fail.append(f"{len(bad)} pages not ok on their latest look, e.g. {bad[0]['name']} {bad[0]['outcome']} at {bad[0]['observed_at_utc']}")
+    earlier = [r for r in recent if r["outcome"] != "ok" and latest[(r["source"], r["name"])]["outcome"] == "ok"]
+    if earlier:
+        info.append(f"{len(earlier)} earlier page looks not ok, since read ok (e.g. {earlier[0]['name']} at {earlier[0]['observed_at_utc']})")
     starts = sorted(m["started_at_utc"] for m in ms if "kalshi" in m["sources"])
     t = [datetime.fromisoformat(s.replace("Z", "+00:00")) for s in starts]
     if len(t) > 1:
@@ -57,9 +64,9 @@ def audit(root: Path, hours: int, now: datetime) -> tuple[list[str], list[str]]:
     if mism:
         fail.append(f"Silicon Data headline differs from its own history: {mism[:5]}")
     # The page against Kalshi's settlement source, same GPU and date.
-    from .sources.ornn import GPUS
+    from .sources.ornn import DASHBOARD_NAME, GPUS
     dash = {(r["gpu"], r["date"]): r["price"] for r in store.read_table(root, "ornn_history")}
-    sid_gpu = {sid: g for g, (_, _, sid) in GPUS.items()}
+    sid_gpu = {sid: DASHBOARD_NAME.get(g, g) for g, (_, _, sid) in GPUS.items()}
     off = [(r["series_id"], r["as_of"]) for r in obs if r["source"] == "ornn"
            and dash.get((sid_gpu.get(r["series_id"]), r["as_of"])) not in (None, r["price_usd_per_gpu_hr"])]
     if off:
