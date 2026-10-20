@@ -52,11 +52,9 @@ jobs:
       - name: Collect
         env:
           VAST_API_KEY: ${{ secrets.VAST_API_KEY }}
-          SCHEDULE: ${{ github.event.schedule }}
           ONLY: ${{ inputs.only }}
         # Exit 2 (degraded) or 1 (nothing fetched) turns the job red; later steps still run.
         run: |
-          if [ "$SCHEDULE" = "7 */3 * * *" ]; then ONLY=kalshi; fi
           python -m cim.run --data-dir data ${ONLY:+--only "$ONLY"}
       - name: Verify archive
         if: always()
