@@ -24,7 +24,7 @@ import hashlib
 import json
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import anchor, build, report, store
@@ -36,7 +36,7 @@ DERIVED = [*TABLES, "coverage"]
 # Max hours since a source's last successful fetch. GitHub schedules are best-effort: on
 # 2026-10-14 the 06:07 and 09:07 runs were dropped or ran hours late. Limits allow that slack:
 # a daily run plus 6 h, and three missed 3-hourly Kalshi runs.
-FRESH_HOURS = {"ornn": 30, "silicondata": 30, "semianalysis": 30, "kalshi_settled": 30, "kalshi": 10, "vast": 30,
+FRESH_HOURS = {"ornn": 30, "silicondata": 30, "kalshi_settled": 30, "kalshi": 10, "vast": 30,
                "docs": 30, "getdeploying": 30}
 
 
@@ -121,6 +121,21 @@ def stale(root: Path, now: datetime) -> list[str]:
         age = (now - datetime.fromisoformat(last[src].replace("Z", "+00:00"))).total_seconds() / 3600
         if age > hours:
             out.append(f"{src}: last successful fetch {last[src]} is {age:.0f}h old (limit {hours}h)")
+    # Page level: fetched, but not read (refused, parse failure) for the whole limit. A page no
+    # longer fetched at all (a retired source) is not monitored; a stopped schedule is caught above.
+    looks: dict[tuple, list[dict]] = {}
+    for r in store.read_table(root, "coverage"):
+        looks.setdefault(("kalshi_settled" if r["name"].endswith("_settled") else r["source"], r["name"]), []).append(r)
+    for (src, name), rs in sorted(looks.items()):
+        hours = FRESH_HOURS.get(src)
+        if hours is None:
+            continue
+        since = (now - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        watched_long_enough = rs[0]["observed_at_utc"] < since  # a new page gets the full limit
+        if watched_long_enough and any(r["observed_at_utc"] >= since for r in rs) and not any(
+                r["outcome"] == "ok" and r["observed_at_utc"] >= since for r in rs):
+            out.append(f"{src}/{name}: not read in {hours}h (latest: {rs[-1]['outcome']} at {rs[-1]['observed_at_utc']}, "
+                       f"{rs[-1]['problems'] or rs[-1]['error']})"[:300])
     return out
 
 

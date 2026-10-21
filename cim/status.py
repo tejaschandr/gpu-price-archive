@@ -1,7 +1,8 @@
 """Health report: python -m cim.status [--data-dir data]
 
-Prints a markdown report of everything wrong right now: the latest run's degraded sources with
-their errors and problems, plus every cim.verify --fresh issue. Exit 1 if anything is wrong.
+Prints a markdown report of everything wrong right now: >30% moves and rejected rows in the latest
+run, every cim.verify --fresh issue (including pages unread past their limit) and audit failures.
+Warnings (a failed fetch, a refused page) are in the job summary, not here. Exit 1 if anything is wrong.
 CI posts this as a GitHub issue, so a failure says what broke, not only that something did.
 """
 
@@ -12,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import audit, store, verify
+from . import audit, run, store, verify
 
 
 def report(root: Path, now: datetime) -> list[str]:
@@ -20,12 +21,8 @@ def report(root: Path, now: datetime) -> list[str]:
     ms = store.read_manifests(root)
     if ms:
         m = ms[-1]
-        for name in m.get("degraded", []):
-            e = m["sources"].get(name, {})
-            detail = "; ".join(e.get("errors", []) + e.get("jumps", []) + e.get("problems", [])) or "see build problems"
-            lines.append(f"- **{name}** degraded in run {m['started_at_utc']}: {detail[:500]}")
-        for p in m.get("build_problems", [])[:10]:
-            lines.append(f"- build: {p[:300]}")
+        # Warnings (failed fetches, refused pages) don't alert; missing data does, via verify.stale.
+        lines += [f"- run {m['started_at_utc']}: {a[:400]}" for a in run.alerts(m)[:10]]
         if m.get("fatal"):
             lines.append(f"- run {m['started_at_utc']} crashed: {m['fatal']}")
     issues = verify.verify(root) + verify.stale(root, now) + verify.pending_proofs(root, now) + verify.stale_values(root, now)

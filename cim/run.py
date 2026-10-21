@@ -4,8 +4,11 @@ Fetches every source's requests once, saves the exact bytes, and records each fe
 manifest as it happens. Then rebuilds the tables and reports from all raw snapshots
 (cim.build, cim.report). Each source is isolated: one failing never blocks the others.
 
-Exit: 0 healthy; 2 degraded (a fetch failed, a parser reported a problem, a series jumped, or a
-source produced fewer rows than its EXPECTED_ROWS); 1 nothing was fetched.
+Exit: 2 when a human must look now (a published index moved more than 30%, a row failed the
+validity rules, or a source's pages downloaded but gave no rows at all for a table it must fill:
+the API or tickers changed); 1 nothing was fetched; else 0. Fetch failures, refused pages and short sources are
+warnings ("degraded" in the manifest and job summary): missing data alerts through cim.verify
+--fresh once a page has gone unread for its freshness limit.
 """
 
 from __future__ import annotations
@@ -159,7 +162,19 @@ def main(argv: list[str] | None = None) -> int:
         summary(manifest)
     if not any(f.get("sha256") for f in manifest["fetches"]):
         return 1
-    return 2 if manifest["degraded"] else 0
+    return 2 if alerts(manifest) else 0
+
+
+def alerts(m: dict) -> list[str]:
+    """What needs a human now. Everything else in "degraded" is a warning."""
+    out = [f"{n}: {j}" for n, e in m["sources"].items() for j in e["jumps"]]
+    out += [f"build: {p}" for p in m.get("build_problems", [])]
+    for n, e in m["sources"].items():
+        fetched = any(f.get("sha256") for f in m["fetches"] if f["source"] == n)
+        empty = [t for t in ALL[n].EXPECTED_ROWS if fetched and e["requests"] and e["rows"].get(t, 0) == 0]
+        if empty:
+            out.append(f"{n}: pages downloaded but no {', '.join(empty)} rows (API or layout changed?)")
+    return out
 
 
 def summary(m: dict) -> None:

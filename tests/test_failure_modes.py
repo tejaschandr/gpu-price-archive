@@ -52,10 +52,12 @@ class TestSilentFailures(_Base):
         self.assertEqual(run_offline(self.root, net, argv=("--only", "kalshi")), 2)
         self.assertEqual(self.last_manifest()["degraded"], ["kalshi"])
 
-    def test_problem_alone_is_degraded(self):
-        """a new Ornn series was logged but the run was green."""
+    def test_problem_alone_is_a_warning(self):
+        """A new Ornn series is shown in the run summary; it doesn't alert (nothing is missing)."""
         page = live("ornn__home.html").replace(b"</body>", b"<p>OCPI-B300</p></body>")
-        self.assertEqual(run_offline(self.root, FakeNet(bodies={ornn.PAGE_URL: page}), argv=("--only", "ornn")), 2)
+        self.assertEqual(run_offline(self.root, FakeNet(bodies={ornn.PAGE_URL: page}), argv=("--only", "ornn")), 0)
+        self.assertEqual(self.last_manifest()["degraded"], ["ornn"])
+        self.assertIn("OCPI-B300", self.last_manifest()["sources"]["ornn"]["problems"][-1])
 
     def test_skipped_source_is_a_note_not_a_failure(self):
         self.assertEqual(run_offline(self.root, argv=("--only", "vast")), 1)  # nothing fetched, nothing degraded
@@ -267,10 +269,11 @@ class TestStatus(_Base):
         run_offline(self.root, start="2026-10-14T22:17:00Z", argv=("--only", "ornn"))
         self.assertEqual(status.report(self.root, now), [])
         run_offline(self.root, FakeNet(fail={"ornn": 403}), start="2026-10-14T22:30:00Z", argv=("--only", "ornn"))
-        line, *more = status.report(self.root, now)
-        self.assertIn("**ornn** degraded", line)
-        self.assertIn("HTTP 403", line)
-        self.assertTrue(all("audit:" in m for m in more))  # the audit sees the failed look too
+        self.assertEqual(status.report(self.root, now), [])  # one failed look is a warning
+        later = datetime(2026, 10, 16, 6, 0, tzinfo=timezone.utc)  # past the 30 h limit, still failing
+        run_offline(self.root, FakeNet(fail={"ornn": 403}), start="2026-10-16T05:30:00Z", argv=("--only", "ornn"))
+        lines = status.report(self.root, later)
+        self.assertTrue(any("ornn/home: not read in 30h" in l and "HTTP 403" in l for l in lines), lines)
 
 
 class TestAudit(_Base):

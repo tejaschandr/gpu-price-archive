@@ -40,8 +40,8 @@ def audit(root: Path, hours: int, now: datetime) -> tuple[list[str], list[str]]:
     recent = [r for r in store.read_table(root, "coverage") if r["observed_at_utc"] >= since]
     latest = {(r["source"], r["name"]): r for r in recent}
     bad = [r for r in latest.values() if r["outcome"] != "ok"]
-    if bad:
-        fail.append(f"{len(bad)} pages not ok on their latest look, e.g. {bad[0]['name']} {bad[0]['outcome']} at {bad[0]['observed_at_utc']}")
+    if bad:  # a warning: verify --fresh alerts once a page stays unread past its limit
+        info.append(f"WARN {len(bad)} pages not ok on their latest look, e.g. {bad[0]['name']} {bad[0]['outcome']} at {bad[0]['observed_at_utc']}")
     earlier = [r for r in recent if r["outcome"] != "ok" and latest[(r["source"], r["name"])]["outcome"] == "ok"]
     if earlier:
         info.append(f"{len(earlier)} earlier page looks not ok, since read ok (e.g. {earlier[0]['name']} at {earlier[0]['observed_at_utc']})")

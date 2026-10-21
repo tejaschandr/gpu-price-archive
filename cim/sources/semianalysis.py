@@ -22,7 +22,9 @@ NO_VALUE = "—"  # the page's own em dash for "no value published"
 
 
 def requests() -> tuple[list[Request], list[str]]:
-    return [Request("index", URL, "html")], []
+    # Retired 2026-10-21: the public value has been stale since Apr 2026. The parser stays so
+    # archived snapshots rebuild.
+    return [], ["skipped: retired 2026-10-21 (public value stale since Apr 2026)"]
 
 
 def parse_page(body: bytes) -> tuple[list[dict], list[str]]:

@@ -50,12 +50,12 @@ class TestCollect(_Base):
         net = FakeNet()
         self.assertEqual(run_offline(self.root, net), 0)
         [m] = self.manifests()
-        expected = 1 + len(ornn.HISTORY_GPUS) + len(silicondata.PAGES) + 1 + 2 * len(kalshi.SERIES) + len(docs.PAGES) + len(getdeploying.SLUGS)  # vast skipped without a key
+        expected = 1 + len(ornn.HISTORY_GPUS) + len(silicondata.PAGES) + 2 * len(kalshi.SERIES) + len(docs.PAGES) + len(getdeploying.SLUGS)  # vast skipped without a key
         self.assertEqual(len(m["fetches"]), expected)
         self.assertEqual(sum(net.calls.values()), expected)  # one request per page
         self.assertTrue(all(f.get("sha256") and f["status"] == 200 for f in m["fetches"]))
         self.assertEqual(m["degraded"], [])
-        self.assertEqual(len(rows(self.root, "observations")), 13)  # ornn 5, silicondata 6, semianalysis 2
+        self.assertEqual(len(rows(self.root, "observations")), 11)  # ornn 5, silicondata 6 (SemiAnalysis retired)
         self.assertEqual(len(rows(self.root, "kalshi_settlements")), 2)
         self.assertEqual(verify.verify(self.root), [])
         self.assertIn("**+$0.32/GPU-hr** on 2026-10-13", (self.root / "LATEST.md").read_text())
@@ -179,7 +179,7 @@ class TestRebuildAndVerify(_Base):
         with mock.patch.object(ornn, "parse", side_effect=RuntimeError("boom")):
             problems = build.build(self.root)
         self.assertTrue(problems and "boom" in problems[0])
-        self.assertEqual(len(rows(self.root, "observations")), 8)  # ornn's 4 gone, the rest intact
+        self.assertEqual(len(rows(self.root, "observations")), 6)  # ornn's gone, silicondata's intact
 
 
 class TestFreshness(_Base):
@@ -191,7 +191,7 @@ class TestFreshness(_Base):
         self.assertEqual([s.split(":")[0] for s in later], ["kalshi"])  # 3-hourly source, 10h limit
         much_later = verify.stale(self.root, datetime(2026, 10, 15, 6, 0, tzinfo=timezone.utc))
         self.assertEqual(sorted(s.split(":")[0] for s in much_later),
-                         ["docs", "getdeploying", "kalshi", "kalshi_settled", "ornn", "semianalysis", "silicondata"])
+                         ["docs", "getdeploying", "kalshi", "kalshi_settled", "ornn", "silicondata"])
 
     def test_kalshi_only_run_keeps_daily_sources_fresh_check(self):
         from datetime import datetime, timezone
@@ -199,7 +199,7 @@ class TestFreshness(_Base):
         run_offline(self.root, start="2026-10-14T23:07:00Z", argv=("--only", "kalshi"))
         stale = verify.stale(self.root, datetime(2026, 10, 15, 5, 0, tzinfo=timezone.utc))
         self.assertEqual(sorted(s.split(":")[0] for s in stale),
-                         ["docs", "getdeploying", "kalshi_settled", "ornn", "semianalysis", "silicondata"])  # the daily run stopped
+                         ["docs", "getdeploying", "kalshi_settled", "ornn", "silicondata"])  # the daily run stopped
 
 
 class TestFailures(_Base):
@@ -207,14 +207,13 @@ class TestFailures(_Base):
         for code in (403, 429, 500):
             with self.subTest(code=code):
                 self.setUp()
-                net = FakeNet(fail={"semianalysis": code})
-                self.assertEqual(run_offline(self.root, net), 2)
+                net = FakeNet(fail={"getdeploying": code})
+                self.assertEqual(run_offline(self.root, net), 0)  # a warning; freshness alerts if it lasts
                 [m] = self.manifests()
-                self.assertEqual(m["degraded"], ["semianalysis"])
-                [f] = [f for f in m["fetches"] if f["source"] == "semianalysis"]
-                self.assertNotIn("sha256", f)
-                self.assertIn(f"HTTP {code}", f["error"])
-                self.assertEqual(net.calls["semianalysis"], 1)  # HTTP errors are never retried
+                self.assertEqual(m["degraded"], ["getdeploying"])
+                fs = [f for f in m["fetches"] if f["source"] == "getdeploying"]
+                self.assertTrue(all("sha256" not in f and f"HTTP {code}" in f["error"] for f in fs))
+                self.assertEqual(net.calls["getdeploying"], len(getdeploying.SLUGS))  # HTTP errors are never retried
                 self.assertEqual(len(rows(self.root, "observations")), 11)
                 self.assertEqual(verify.verify(self.root), [])
 
@@ -313,13 +312,21 @@ class TestSettlementSourceAudit(_Base):
 
 
 class TestAuditPageLooks(_Base):
-    def test_only_a_bad_latest_look_fails(self):
+    def test_bad_latest_look_is_a_warning_until_stale(self):
         now = datetime(2026, 10, 14, 23, tzinfo=timezone.utc)
         bad = FakeNet({silicondata.BASE.format(slug="h100"): live("silicondata__h100.html").replace(b"aria-pressed=", b"aria-selected=")})
         run_offline(self.root, bad, start="2026-10-14T21:37:00Z")
-        self.assertIn("pages not ok on their latest look", audit.audit(self.root, 24, now)[0][0])
-        run_offline(self.root, start="2026-10-14T22:37:00Z")
         fail, info = audit.audit(self.root, 24, now)
+        self.assertEqual(fail, [])
+        self.assertTrue(any(i.startswith("WARN 1 pages not ok on their latest look") for i in info))
+        self.assertEqual(verify.stale(self.root, now), [])
+        run_offline(self.root, bad, start="2026-10-16T03:37:00Z")  # still refused 30 h later: data missing
+        stale = verify.stale(self.root, datetime(2026, 10, 16, 4, tzinfo=timezone.utc))
+        self.assertEqual([s.split(":")[0] for s in stale], ["silicondata/h100"])
+        run_offline(self.root, start="2026-10-16T04:37:00Z")  # read again: fresh, and the bad looks are history
+        later = datetime(2026, 10, 16, 5, tzinfo=timezone.utc)
+        self.assertEqual(verify.stale(self.root, later), [])
+        fail, info = audit.audit(self.root, 24, later)
         self.assertEqual(fail, [])
         n = 1 + silicondata.RETRIES
         self.assertTrue(any(i.startswith(f"{n} earlier page looks not ok, since read ok (e.g. h100") for i in info))
