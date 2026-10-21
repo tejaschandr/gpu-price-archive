@@ -70,7 +70,8 @@ TABLES: dict[str, tuple[list[str], tuple[str, ...] | None, tuple[str, ...]]] = {
     "announcements": (
         ["observed_at_utc", "label", "description", "announced", "effective", "type", "restatement",
          "body_sha256", "raw_sha256"],
-        ("label",), ("description", "announced", "effective", "type", "restatement", "body_sha256"),
+        # description only as first seen: the page dropped it on 2026-10-20 (body_sha256 tracks edits)
+        ("label",), ("announced", "effective", "type", "restatement", "body_sha256"),
     ),
 }
 

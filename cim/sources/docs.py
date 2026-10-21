@@ -26,6 +26,21 @@ PAGES = {
 EXPECTED_ROWS = {"documents": len(PAGES), "announcements": 1}
 
 _UPDATE = re.compile(r'<Update label="([^"]+)" description="([^"]*)">(.*?)</Update>', re.S)
+# Since 2026-10-20 the page renders each entry as a bold label, entries separated by "***", with no
+# description; the body text is the same, so its hash carries over.
+_LABEL = re.compile(r"^\*\*(\d{6}-\d+)\*\*[ \t]*$", re.M)
+_RULE = re.compile(r"^\*{3}[ \t]*$", re.M)
+_FOOTER = re.compile(r"\n\s*This documentation is built and hosted on .*\Z", re.S)
+
+
+def _entries(text: str) -> list[tuple[str, str, str]]:
+    """(label, description, body) for each announcement, in either page format."""
+    old = _UPDATE.findall(text)
+    if old:
+        return old
+    marks = list(_LABEL.finditer(text))
+    return [(m.group(1), "", _FOOTER.sub("", _RULE.split(text[m.end():nxt.start() if nxt else len(text)])[0]))
+            for m, nxt in zip(marks, marks[1:] + [None])]
 
 
 def _field(block: str, name: str) -> str:
@@ -52,5 +67,5 @@ def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
          "effective": _field(b, "Effective Date"), "type": _field(b, "Type"),
          "restatement": _field(b, "Restatement"),
          "body_sha256": hashlib.sha256(" ".join(b.split()).encode()).hexdigest()}
-        for label, desc, b in _UPDATE.findall(text)]
-    return rows, [] if rows["announcements"] else ["silicondata_announcements: no <Update> entries found"]
+        for label, desc, b in _entries(text)]
+    return rows, [] if rows["announcements"] else ["silicondata_announcements: no announcement entries found"]

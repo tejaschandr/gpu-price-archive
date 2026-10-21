@@ -289,6 +289,15 @@ class TestDocs(unittest.TestCase):
         self.assertEqual(got["260911-1"], ("2026-09-11", "2026-09-14", "No"))
         self.assertEqual((len(rows["documents"]), problems), (1, []))
 
+    def test_announcement_format_change_is_not_a_revision(self):
+        """2026-10-20: the page dropped its <Update> blocks for bold labels; same entries, same hashes."""
+        new = live("docs__silicondata_announcements_20261020.md")
+        url = docs.PAGES["silicondata_announcements"]
+        key = lambda body: [{k: r[k] for k in ("label", "announced", "effective", "type", "restatement", "body_sha256")}
+                            for r in docs.parse("silicondata_announcements", body, url)[0]["announcements"]]
+        self.assertEqual(key(new), key(self.MD))
+        self.assertEqual(len(key(new)), 2)
+
     def test_text_version_ignores_markup_and_whitespace(self):
         a = docs.parse("ornn_terms", DOC_HTML, "u")[0]["documents"][0]["text_sha256"]
         b = docs.parse("ornn_terms", DOC_HTML.replace(b"<p>", b'<p class="x">\n  '), "u")[0]["documents"][0]["text_sha256"]
