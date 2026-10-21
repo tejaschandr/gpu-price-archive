@@ -321,4 +321,19 @@ class TestAuditPageLooks(_Base):
         run_offline(self.root, start="2026-10-14T22:37:00Z")
         fail, info = audit.audit(self.root, 24, now)
         self.assertEqual(fail, [])
-        self.assertTrue(any(i.startswith("1 earlier page looks not ok, since read ok (e.g. h100") for i in info))
+        n = 1 + silicondata.RETRIES
+        self.assertTrue(any(i.startswith(f"{n} earlier page looks not ok, since read ok (e.g. h100") for i in info))
+
+
+class TestRefetch(_Base):
+    def test_refused_page_is_fetched_again(self):
+        url = silicondata.BASE.format(slug="h200")
+        bad = live("silicondata__h200.html").replace(b"As of", b"Updated", 1)  # no headline
+        net = FakeNet({url: [bad, bad, live("silicondata__h200.html")]})
+        self.assertEqual(run_offline(self.root, net, argv=("--only", "silicondata")), 0)
+        [m] = self.manifests()
+        self.assertEqual(len([f for f in m["fetches"] if f["name"] == "h200"]), 3)
+        self.assertEqual(len([n for n in m["sources"]["silicondata"]["notes"] if n.startswith("h200: fetched again")]), 2)
+        looks = [r["outcome"] for r in rows(self.root, "coverage") if r["name"] == "h200"]
+        self.assertEqual(looks, ["problem", "problem", "ok"])
+        self.assertIn("SD-H200", {r["series_id"] for r in rows(self.root, "observations")})

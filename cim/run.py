@@ -15,6 +15,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -64,37 +65,54 @@ def collect_source(root: Path, manifest: dict, name: str, previous: list[dict]) 
     entry["notes"] += [m for m in notes if m.startswith("skipped:")]
     entry["problems"] += [scrub(m) for m in notes if not m.startswith("skipped:")]
     entry["requests"] = len(reqs)
+    retries = getattr(mod, "RETRIES", 0)
     for r in reqs:
-        f = {"source": name, "name": r.name, "url": r.url, "fetched_at_utc": utcnow()}
-        manifest["fetches"].append(f)
-        try:
-            status, body, evidence = http.get(r.url, headers=r.headers, data=r.data, method=r.method)
-            # When the bytes arrived, not when the request was queued: pacing and retries can add
-            # a minute, and a point-in-time stamp must never be earlier than the data.
-            f["fetched_at_utc"] = utcnow()
-            f["status"], f["response"] = status, evidence
-            if r.transform:
-                body = r.transform(body)
-            f["path"], f["sha256"] = store.save_raw(root, f["fetched_at_utc"][:10], name, r.name, body, r.ext)
-            f["bytes"] = len(body)
-        except Exception as e:  # noqa: BLE001 - isolate every request
-            f["error"] = scrub(f"{type(e).__name__}: {e}")
-            entry["errors"].append(f"{r.name}: {f['error']}")
-            continue
-        finally:
-            # After every fetch, so a killed run still leaves a manifest for every byte it saved.
-            store.write_manifest(root, manifest)
-        try:
-            rows, problems = mod.parse(r.name, body, r.url)
+        for attempt in range(1 + retries):
+            body = fetch(root, manifest, entry, name, r)
+            if body is None:
+                break
+            try:
+                rows, problems = mod.parse(r.name, body, r.url)
+            except Exception as e:  # noqa: BLE001 - saved bytes stay; the parse failure is reported
+                entry["problems"].append(scrub(f"{r.name}: parse failed: {type(e).__name__}: {e}"))
+                entry["trace"] = scrub(traceback.format_exc(limit=3))
+                break
+            if problems and attempt < retries:
+                # The vendor serves inconsistent page variants; a refused page is asked for again. Every
+                # attempt stays in the manifest and in coverage.
+                entry["notes"].append(scrub(f"{r.name}: fetched again after: {problems[-1]}")[:300])
+                time.sleep(getattr(mod, "RETRY_WAIT", 5))
+                continue
             for t, rs in rows.items():
                 entry["rows"][t] = entry["rows"].get(t, 0) + len(rs)
             entry["observations"] += len(rows.get("observations", []))
             entry["problems"] += [scrub(p) for p in problems]
             entry["jumps"] += quality.jumps(rows.get("observations", []), previous)
-        except Exception as e:  # noqa: BLE001 - saved bytes stay; the parse failure is reported
-            entry["problems"].append(scrub(f"{r.name}: parse failed: {type(e).__name__}: {e}"))
-            entry["trace"] = scrub(traceback.format_exc(limit=3))
+            break
 
+
+def fetch(root: Path, manifest: dict, entry: dict, name: str, r) -> bytes | None:
+    """One request, saved and recorded in the manifest as it happens; None if it failed."""
+    f = {"source": name, "name": r.name, "url": r.url, "fetched_at_utc": utcnow()}
+    manifest["fetches"].append(f)
+    try:
+        status, body, evidence = http.get(r.url, headers=r.headers, data=r.data, method=r.method)
+        # When the bytes arrived, not when the request was queued: pacing and retries can add
+        # a minute, and a point-in-time stamp must never be earlier than the data.
+        f["fetched_at_utc"] = utcnow()
+        f["status"], f["response"] = status, evidence
+        if r.transform:
+            body = r.transform(body)
+        f["path"], f["sha256"] = store.save_raw(root, f["fetched_at_utc"][:10], name, r.name, body, r.ext)
+        f["bytes"] = len(body)
+        return body
+    except Exception as e:  # noqa: BLE001 - isolate every request
+        f["error"] = scrub(f"{type(e).__name__}: {e}")
+        entry["errors"].append(f"{r.name}: {f['error']}")
+        return None
+    finally:
+        # After every fetch, so a killed run still leaves a manifest for every byte it saved.
+        store.write_manifest(root, manifest)
 
 def degraded(name: str, e: dict) -> bool:
     short = e["requests"] and any(e["rows"].get(t, 0) < n for t, n in ALL[name].EXPECTED_ROWS.items())

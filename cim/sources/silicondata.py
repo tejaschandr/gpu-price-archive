@@ -7,6 +7,11 @@ toggle and server-render only the pressed tab; the others publish one market-wid
 A headline is accepted only if the page matches its expected layout: one headline; the toggle
 present (with Neo-Cloud pressed) exactly where expected; and the headline equal to the page data's
 single non-hyperscaler reading. Anything else records nothing and reports why.
+
+Since 2026-10-21 the H100 and A100 pages are also served without the toggle, carrying one segment's
+card: the Neo-Cloud one is accepted (its title is the vendor's ticker, and the headline must equal
+it); a Hyperscaler-only page has no Neo-Cloud value and is refused. Pages also come back with no
+data at all. A refused page is fetched again (RETRIES), since the variant changes per request.
 """
 
 from __future__ import annotations
@@ -17,7 +22,8 @@ from ..model import Request, Rows, obs
 from ..text import DATE_RE, html_to_text, parse_date
 
 NAME = "silicondata"
-EXPECTED_ROWS = {"observations": 6, "silicondata_history": 240}  # 8 series x 30 days
+EXPECTED_ROWS = {"observations": 6, "silicondata_history": 180}  # at least one 30-day series per page
+RETRIES, RETRY_WAIT = 4, 3  # refused pages are fetched again; the vendor's page variant changes per request
 BASE = "https://www.silicondata.com/products/silicon-index/{slug}"
 
 # slug -> (sku, series_id, has_segment_toggle). Tickers are Silicon Data's where published.
@@ -60,16 +66,16 @@ def parse_page(body: bytes, toggle: bool) -> dict | None:
         return None
     html = body.decode("utf-8", errors="replace")
     tabs = [(state, label.strip()) for state, label in _TAB.findall(html) if label.strip() in _SEGMENTS]
-    if toggle:
+    readings = _READING.findall(_page_data(body))
+    if toggle and tabs:
         if (len(tabs) != 2 or {label for _, label in tabs} != _SEGMENTS
-                or [label for state, label in tabs if state == "true"] != ["Neo-Cloud"]):
+                or [label for state, label in tabs if state == "true"] != ["Neo-Cloud"] or len(readings) != 2):
             return None
-    elif tabs:
+    elif tabs or len(readings) != 1:  # a single-reading page, or a toggle page served with one segment
         return None
     date, price = heads[0]
-    readings = _READING.findall(_page_data(body))
     neo = [float(v) for t, v in readings if "hyperscaler" not in t.lower()]
-    if len(readings) != (2 if toggle else 1) or neo != [float(price)]:
+    if neo != [float(price)]:
         return None
     faq = _FAQ.search(text)
     return {"as_of": parse_date(date), "price": float(price),
@@ -90,7 +96,7 @@ def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
                                           for t, d, p in history]}
     problems = []
     titles = {t for t, _, _ in history}
-    if titles != TITLES[name]:
+    if titles - TITLES[name]:
         problems.append(f"{name}: history series titles {sorted(titles)} differ from expected {sorted(TITLES[name])}")
     r = parse_page(body, toggle)
     if not r:

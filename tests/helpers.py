@@ -89,7 +89,10 @@ class FakeNet:
         self.requests.append(req)
         if src in self.fail:
             raise urllib.error.HTTPError(url, self.fail[src], "fail", {}, io.BytesIO(b""))
-        return FakeResp(self.bodies[url])
+        body = self.bodies[url]
+        if isinstance(body, list):  # served in order, the last one repeating
+            body = body.pop(0) if len(body) > 1 else body[0]
+        return FakeResp(body)
 
 
 def clock(start: str):

@@ -127,6 +127,20 @@ class TestSiliconData(unittest.TestCase):
                 self.assertNotIn("observations", rows)
                 self.assertIn("does not match expected layout", problems[0])
 
+    def test_single_segment_variants(self):
+        """2026-10-21: toggle pages also served without the toggle, with one segment's card."""
+        h100 = live("silicondata__h100.html")
+        toggle = h100[h100.rindex(b"<button", 0, h100.index(b'aria-pressed="true"')):h100.index(b"</button>", h100.index(b">Hyperscaler<")) + 9]
+        cards = h100[h100.index(b'{\\"key\\"'):h100.index(b']}"])')]
+        neo, hs = cards.split(b',{\\"key\\"')
+        hs = b'{\\"key\\"' + hs
+        neo_only = h100.replace(toggle, b"").replace(cards, neo)
+        hs_only = h100.replace(toggle, b"").replace(cards, hs).replace(b">2.85<", b">7.15<", 1)
+        self.assertEqual(sd("h100", neo_only)["price"], 2.85)
+        self.assertIsNone(sd("h100", hs_only))
+        rows, problems = silicondata.parse("h100", neo_only, "u")
+        self.assertEqual((rows["observations"][0]["segment"], problems), ("neocloud", []))
+
     def test_history(self):
         by = {}
         for t, d, p in silicondata.parse_history(live("silicondata__h100.html")):

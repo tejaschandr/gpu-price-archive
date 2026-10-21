@@ -97,7 +97,9 @@ class TestCoverage(_Base):
         run_offline(self.root, FakeNet(fail={"silicondata": 503}), start="2026-10-16T22:17:00Z", argv=("--only", "silicondata"))
         h100 = [(r["observed_at_utc"][:10], r["outcome"], r["changed"])
                 for r in store.read_table(self.root, "coverage") if r["name"] == "h100"]
-        self.assertEqual(h100, [("2026-10-14", "ok", "yes"), ("2026-10-15", "problem", "yes"), ("2026-10-16", "failed", "")])
+        # A refused page is fetched again RETRIES times (same bytes: "no" change); a failed fetch is not.
+        self.assertEqual(h100, [("2026-10-14", "ok", "yes"), ("2026-10-15", "problem", "yes")]
+                         + [("2026-10-15", "problem", "no")] * silicondata.RETRIES + [("2026-10-16", "failed", "")])
         h200 = [(r["outcome"], r["changed"]) for r in store.read_table(self.root, "coverage") if r["name"] == "h200"]
         self.assertEqual(h200, [("ok", "yes"), ("ok", "no"), ("failed", "")])
         self.assertEqual(verify.verify(self.root), [])
@@ -110,7 +112,7 @@ class TestCoverage(_Base):
                         start=f"2026-10-{day}T22:17:00Z", argv=("--only", "silicondata"))
         h100 = [(r["outcome"], r["changed"], bool(r["problems"]))
                 for r in store.read_table(self.root, "coverage") if r["name"] == "h100"]
-        self.assertEqual(h100, [("problem", "yes", True), ("problem", "no", True)])
+        self.assertEqual(h100, [("problem", "yes", True)] + [("problem", "no", True)] * (2 * silicondata.RETRIES + 1))
 
 
 class TestProvability(_Base):
