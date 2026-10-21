@@ -315,6 +315,11 @@ class TestDocs(unittest.TestCase):
         self.assertEqual(a, b)
         self.assertNotEqual(a, c)
 
+    def test_site_chrome_is_not_a_text_change(self):
+        page = lambda nav: b"<html><body><nav>" + nav + b"</nav>" + DOC_HTML + b"<footer>" + nav + b"</footer></body></html>"
+        h = lambda body: docs.parse("ornn_terms", body, "u")[0]["documents"][0]["text_sha256"]
+        self.assertEqual(h(page(b"Markets Legal")), h(page(b"Markets Company Legal Data")))
+
     def test_refuses_shells_and_empty_announcements(self):
         self.assertEqual(docs.parse("ornn_terms", b"<p>Checking your browser</p>", "u")[0], {})
         rows, problems = docs.parse("silicondata_announcements", b"# Notes\n" + b"text " * 200,

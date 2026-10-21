@@ -25,6 +25,8 @@ PAGES = {
 }
 EXPECTED_ROWS = {"documents": len(PAGES), "announcements": 1}
 
+# Site navigation and footers change with every redesign (Ornn's, 2026-10-21); only the content counts.
+_CHROME = re.compile(rb"<(nav|header|footer)\b.*?</\1\s*>", re.S | re.I)
 _UPDATE = re.compile(r'<Update label="([^"]+)" description="([^"]*)">(.*?)</Update>', re.S)
 # Since 2026-10-20 the page renders each entry as a bold label, entries separated by "***", with no
 # description; the body text is the same, so its hash carries over.
@@ -53,7 +55,7 @@ def requests() -> tuple[list[Request], list[str]]:
 
 
 def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
-    text = body.decode("utf-8", "replace") if url.endswith(".md") else html_to_text(body)[0]
+    text = body.decode("utf-8", "replace") if url.endswith(".md") else html_to_text(_CHROME.sub(b"", body))[0]
     words = " ".join(text.split())
     if len(words) < 500:  # a challenge page or a script-only shell: nothing to version
         return {}, [f"{name}: only {len(words)} characters of text"]
