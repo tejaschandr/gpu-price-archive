@@ -36,6 +36,16 @@ class TestOrnn(unittest.TestCase):
                                "OCPI-RTX6K": ("1.4000", "2026-10-13")})
         self.assertEqual(problems, [])
 
+    def test_layout_2026_10_19_still_parses(self):
+        rows, problems = ornn.parse("home", live("ornn__home_20261019.html"), ornn.PAGE_URL)
+        self.assertEqual(len(rows["observations"]), 5)
+        self.assertEqual(problems, [])
+
+    def test_undated_rows_need_one_updated_date(self):
+        two = self.BODY.replace(b"</body>", b"<p>Updated October 12, 2026 at 20:00 UTC</p></body>")
+        rows, problems = ornn.parse("home", two, ornn.PAGE_URL)
+        self.assertEqual([r["method"] for r in rows["observations"]], ["public page meta description (card not found)"])
+
     def test_layout_before_2026_10_19_still_parses(self):
         """Archived snapshots must rebuild unchanged: the 4-GPU page without 7-day changes."""
         rows, problems = ornn.parse("home", live("ornn__home_20261013.html"), ornn.PAGE_URL)

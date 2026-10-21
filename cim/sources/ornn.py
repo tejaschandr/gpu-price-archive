@@ -41,6 +41,13 @@ GPUS = {
 _CHANGE = r"[+\-\u2212]?[0-9]+(?:\.[0-9]+)?%"
 _ROW = re.compile(r"(H100 SXM|H200|B200|A100 SXM4|RTX PRO 6000)\s*\$\s*([0-9]+(?:\.[0-9]+)?)\s*(?:" + _CHANGE + r"\s*)?"
                   + DATE_RE + r"(?:\s*\u00b7\s*" + _CHANGE + r"\s*7d)?\s*OCPI-(H100|H200|B200|A100|RTX6K)")
+# Since 2026-10-21: "H100 SXM [Bloomberg: ORNNH100] $3.12 +4.70% +17.74%" (cards) and
+# "H100 SXM $3.12 +4.7% +17.7% ORNNH100" (table): 1-day and 1-month changes, no date on the row.
+# The settle date is then the page's single "Updated <date> at HH:MM UTC" line; cim.audit checks
+# each value against the settlement source for that date.
+_ROW_UNDATED = re.compile(r"(H100 SXM|H200|B200|A100 SXM4|RTX PRO 6000)\s*(?:Bloomberg:\s*[A-Z0-9]{1,12}\s*)?"
+                          r"\$\s*([0-9]+(?:\.[0-9]+)?)\s*" + _CHANGE + r"\s*" + _CHANGE)
+_UPDATED = re.compile(r"Updated " + DATE_RE + r" at \d{2}:\d{2} UTC")
 _META = re.compile(r"(H100 SXM) at \$([0-9.]+) per GPU-hour, settled " + DATE_RE)
 _ANY_SERIES = re.compile(r"\bOCPI-([A-Za-z0-9-]+)")
 
@@ -63,14 +70,17 @@ def parse_history(body: bytes) -> tuple[list[dict], list[str]]:
              "price": f"{p['index_value']:.4f}"} for p in data], []
 
 
-def parse_page(body: bytes) -> list[dict]:
-    """[{display, price, as_of, fallback?}]. A GPU whose two copies disagree is dropped, not guessed."""
+def parse_page(body: bytes) -> tuple[list[dict], set[str]]:
+    """([{display, price, as_of, fallback?}], GPUs whose copies disagree: dropped, not guessed)."""
     text, meta = html_to_text(body)
     out: dict[str, dict] = {}
     conflicted: set[str] = set()
-    for m in _ROW.finditer(text):
-        display, price, date, _ = m.groups()
-        row = {"display": display, "price": float(price), "as_of": parse_date(date)}
+    rows = [(d, p, parse_date(date)) for d, p, date, _ in _ROW.findall(text)]
+    updated = {parse_date(d) for d in _UPDATED.findall(text)}
+    if len(updated) == 1:
+        rows += [(d, p, next(iter(updated))) for d, p in _ROW_UNDATED.findall(text)]
+    for display, price, as_of in rows:
+        row = {"display": display, "price": float(price), "as_of": as_of}
         if out.setdefault(display, row) != row:
             conflicted.add(display)
     for display in conflicted:
@@ -80,7 +90,7 @@ def parse_page(body: bytes) -> list[dict]:
         if m:
             out["H100 SXM"] = {"display": m.group(1), "price": float(m.group(2)),
                                "as_of": parse_date(m.group(3)), "fallback": True}
-    return list(out.values())
+    return list(out.values()), conflicted
 
 
 def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
@@ -88,7 +98,7 @@ def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
         hist, problems = parse_history(body)
         return {"ornn_history": hist}, [f"{name}: {p}" for p in problems]
     rows, problems = [], []
-    found = parse_page(body)
+    found, conflicted = parse_page(body)
     for r in found:
         sku, ff, sid = GPUS[r["display"]]
         method = "public page, latest daily settle"
@@ -99,7 +109,8 @@ def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
     # Missing means on the page but unreadable; a GPU absent from the page (RTX PRO 6000 before
     # 2026-10-19) isn't a problem, and one that disappears shows up as a short run (EXPECTED_ROWS).
     on_page = {f"OCPI-{m}" for m in _ANY_SERIES.findall(html_to_text(body)[0])}
-    missing = sorted(d for d, (_, _, sid) in GPUS.items() if sid in on_page and d not in {r["display"] for r in found})
+    missing = sorted(conflicted | {d for d, (_, _, sid) in GPUS.items()
+                                   if sid in on_page and d not in {r["display"] for r in found}})
     if missing:
         problems.append(f"not parsed (absent or conflicting on page): {', '.join(missing)}")
     known = {sid for _, _, sid in GPUS.values()}
