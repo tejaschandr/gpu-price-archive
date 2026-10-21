@@ -70,4 +70,7 @@ def parse(name: str, body: bytes, url: str) -> tuple[Rows, list[str]]:
          "restatement": _field(b, "Restatement"),
          "body_sha256": hashlib.sha256(" ".join(b.split()).encode()).hexdigest()}
         for label, desc, b in _entries(text)]
+    # The page's version is its entries, not its markup: a reformat (2026-10-20) is not a change.
+    doc["text_sha256"] = hashlib.sha256("\n".join(f"{a['label']} {a['body_sha256']}" for a in rows["announcements"])
+                                        .encode()).hexdigest()
     return rows, [] if rows["announcements"] else ["silicondata_announcements: no announcement entries found"]

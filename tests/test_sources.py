@@ -318,6 +318,10 @@ class TestDocs(unittest.TestCase):
                             for r in docs.parse("silicondata_announcements", body, url)[0]["announcements"]]
         self.assertEqual(key(new), key(self.MD))
         self.assertEqual(len(key(new)), 2)
+        version = lambda body: docs.parse("silicondata_announcements", body, url)[0]["documents"][0]["text_sha256"]
+        self.assertEqual(version(new), version(self.MD))
+        edited = self.MD.replace(b"Restatement: Yes", b"Restatement: No")
+        self.assertNotEqual(version(edited), version(self.MD))
 
     def test_text_version_ignores_markup_and_whitespace(self):
         a = docs.parse("ornn_terms", DOC_HTML, "u")[0]["documents"][0]["text_sha256"]
