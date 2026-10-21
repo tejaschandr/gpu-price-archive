@@ -1,14 +1,15 @@
 """Failure modes of collection, coverage and provenance: each test reproduces one and pins the fix."""
 
+import hashlib
 import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from cim import anchor, quality, store, verify
+from cim import anchor, audit, quality, run, status, store, verify
 from cim.sources import kalshi, ornn, silicondata, vast
 from helpers import EMPTY_MARKETS, FakeNet, live, run_offline
 
@@ -125,7 +126,6 @@ class TestProvability(_Base):
 
     def fake_proof(self, txt: Path, attested=False, digest=None) -> Path:
         """A structurally valid OpenTimestamps proof (no network): header, sha256 op, digest, a tag."""
-        import hashlib
         tag = anchor._BITCOIN if attested else anchor._PENDING
         ots = txt.with_name(txt.name + ".ots")
         ots.write_bytes(anchor._MAGIC + b"\x01\x08" + (digest or hashlib.sha256(txt.read_bytes()).digest()) + b"\x00" + tag)
@@ -148,7 +148,6 @@ class TestProvability(_Base):
         a = anchor.anchor(self.root)
         ots = self.fake_proof(a)
         made = datetime.strptime(a.name.split(".")[0], "%Y-%m-%dT%H-%M-%SZ").replace(tzinfo=timezone.utc)
-        from datetime import timedelta
         self.assertEqual(verify.pending_proofs(self.root, made + timedelta(hours=47)), [])
         self.assertEqual(len(verify.pending_proofs(self.root, made + timedelta(hours=49))), 1)
         self.fake_proof(a, attested=True)
@@ -233,7 +232,6 @@ class TestWritesAndInputs(_Base):
         self.assertIn("invalid format", self.last_manifest()["sources"]["vast"]["problems"][0])
 
     def test_local_collection_into_repo_data_refused(self):
-        from cim import run
         repo_data = Path(run.__file__).resolve().parents[1] / "data"
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": ""}), mock.patch("sys.stderr"):
             self.assertEqual(run.main(["--data-dir", str(repo_data)]), 1)
@@ -264,7 +262,6 @@ class TestStaleValues(_Base):
 
 class TestStatus(_Base):
     def test_report_names_what_broke(self):
-        from cim import status
         now = datetime(2026, 10, 14, 23, 0, tzinfo=timezone.utc)
         run_offline(self.root, start="2026-10-14T22:17:00Z", argv=("--only", "ornn"))
         self.assertEqual(status.report(self.root, now), [])
@@ -278,14 +275,12 @@ class TestStatus(_Base):
 
 class TestAudit(_Base):
     def test_clean_run_passes_and_reports_values(self):
-        from cim import audit
         run_offline(self.root, start="2026-10-14T22:17:00Z")
         fail, info = audit.audit(self.root, 24, datetime(2026, 10, 14, 23, tzinfo=timezone.utc))
         self.assertEqual(fail, [])
         self.assertTrue(any(i.startswith("last 24h: 1 runs") for i in info))
 
     def test_cross_source_failures_are_caught(self):
-        from cim import audit, status
         run_offline(self.root, start="2026-10-14T22:17:00Z")
         p = next((self.root / "tables" / "kalshi_settlements").glob("*.csv"))
         p.write_text(p.read_text().splitlines()[0] + "\n")  # settlements table loses its rows

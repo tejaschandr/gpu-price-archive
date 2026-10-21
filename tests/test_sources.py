@@ -5,12 +5,11 @@ must return nothing and say why: a wrong value is worse than a missing one.
 """
 
 import json
-from pathlib import Path
 import time
 import unittest
 from unittest import mock
 
-from cim.sources import docs, getdeploying, kalshi, ornn, semianalysis, silicondata, vast
+from cim.sources import docs, getdeploying, kalshi, kalshi_settled, ornn, semianalysis, silicondata, vast
 from helpers import DOC_HTML, DOCS_MD, GD_H100, live, ornn_history
 
 
@@ -296,8 +295,6 @@ class TestVast(unittest.TestCase):
 class TestKalshiSettledWindow(unittest.TestCase):
     def test_settled_requests_are_bounded_to_a_recent_window(self):
         """A series' settled list grows weekly; unbounded it would pass the 1000-market page limit."""
-        import time
-        from cim.sources import kalshi_settled
         with mock.patch("time.time", return_value=1792108800.0):  # 2026-10-15T00:00Z
             [r, *_] = kalshi_settled.requests()[0]
         self.assertIn(f"min_close_ts={1792108800 - 40 * 86400}", r.url)

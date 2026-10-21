@@ -2,15 +2,15 @@
 
 - divergence.csv: per date, Ornn's H100 settle and Silicon Data's H100 (Neo-Cloud) value for that same
   date, and the signed gap. Values come from the vendor's page when it was seen; earlier dates are
-  filled from Silicon Data's own 30-day history and from Kalshi's weekly settlements, which are Ornn's
-  4 PM ET value on the event date. Each value says where it came from and when it was first seen.
+  filled from Ornn's settlement-source history, Kalshi's weekly settlements (Ornn's 4 PM ET value on
+  the event date) and Silicon Data's own 30-day history. Each value says where it came from and when
+  it was first seen.
 - revisions.csv: every vendor-published value that changed after it was first seen.
 - LATEST.md: the latest values, for reading.
 """
 
 from __future__ import annotations
 
-import calendar
 import csv
 import re
 import unicodedata
@@ -20,33 +20,19 @@ from pathlib import Path
 from . import store
 from .sources import vast
 
-INDEX = {"ornn": "OCPI-H100", "silicondata": "SDH100RT", "semianalysis": "SA-H100-COMPOSITE"}
+INDEX = {"ornn": "OCPI-H100", "silicondata": "SDH100RT"}
 # Max age, in days past the end of the value's own period, for LATEST.md's "current" status.
-# Daily sources: 3 days covers a weekend. SemiAnalysis publishes monthly.
-MAX_AGE_DAYS = {"ornn": 3, "silicondata": 3, "semianalysis": 35}
-_MONTHS = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+MAX_AGE_DAYS = {"ornn": 3, "silicondata": 3}  # 3 days covers a weekend
 FILES = ("divergence.csv", "revisions.csv", "LATEST.md")
-
-
-def period_end(as_of: str) -> date | None:
-    """'2026-10-13' -> that day; 'Apr 2026' -> 2026-04-30; anything else -> None."""
-    try:
-        return date.fromisoformat(as_of)
-    except ValueError:
-        pass
-    parts = as_of.split()
-    if len(parts) == 2 and parts[0][:3].lower() in _MONTHS and parts[1].isdigit():
-        y, m = int(parts[1]), _MONTHS.index(parts[0][:3].lower()) + 1
-        return date(y, m, calendar.monthrange(y, m)[1])
-    return None
 
 
 def status(src: str, row: dict, day: str) -> str:
     """'' if current, else 'stale' or 'unknown_as_of'."""
-    end = period_end(row["as_of"])
-    if end is None:
+    try:
+        published = date.fromisoformat(row["as_of"])
+    except ValueError:
         return "unknown_as_of"
-    return "stale" if (date.fromisoformat(day) - end).days > MAX_AGE_DAYS[src] else ""
+    return "stale" if (date.fromisoformat(day) - published).days > MAX_AGE_DAYS[src] else ""
 
 
 def md(text) -> str:

@@ -22,7 +22,7 @@ PRICE = (0.01, 100.0)
 JUMP = 0.30             # flag a series moving more than 30% from its last known value
 # Jump alerts only for published indices. Kalshi medians and Vast medians of a few offers move
 # more than 30% routinely; alerting on them would bury real alerts.
-JUMP_SOURCES = {"ornn", "silicondata", "semianalysis"}
+JUMP_SOURCES = {"ornn", "silicondata"}
 
 
 def _num(v, lo, hi, empty_ok=False) -> bool:

@@ -184,7 +184,6 @@ class TestRebuildAndVerify(_Base):
 
 class TestFreshness(_Base):
     def test_overdue_sources_flagged(self):
-        from datetime import datetime, timezone
         run_offline(self.root, start="2026-10-13T22:17:00Z")
         self.assertEqual(verify.stale(self.root, datetime(2026, 10, 14, 4, 0, tzinfo=timezone.utc)), [])
         later = verify.stale(self.root, datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc))
@@ -194,7 +193,6 @@ class TestFreshness(_Base):
                          ["docs", "getdeploying", "kalshi", "kalshi_settled", "ornn", "silicondata"])
 
     def test_kalshi_only_run_keeps_daily_sources_fresh_check(self):
-        from datetime import datetime, timezone
         run_offline(self.root, start="2026-10-13T22:17:00Z")
         run_offline(self.root, start="2026-10-14T23:07:00Z", argv=("--only", "kalshi"))
         stale = verify.stale(self.root, datetime(2026, 10, 15, 5, 0, tzinfo=timezone.utc))
@@ -218,7 +216,7 @@ class TestFailures(_Base):
                 self.assertEqual(verify.verify(self.root), [])
 
     def test_everything_down(self):
-        self.assertEqual(run_offline(self.root, FakeNet(fail={s: 503 for s in ("ornn", "silicondata", "semianalysis", "kalshi", "docs", "getdeploying")})), 1)
+        self.assertEqual(run_offline(self.root, FakeNet(fail={s: 503 for s in ("ornn", "silicondata", "kalshi", "docs", "getdeploying")})), 1)
         self.assertIn("No observations yet.", (self.root / "LATEST.md").read_text())
 
     def test_no_response_is_retried_with_backoff(self):
@@ -272,9 +270,9 @@ class TestSecrets(_Base):
 
 class TestReport(unittest.TestCase):
     def test_stale_rules(self):
-        cases = [("semianalysis", "Oct 2026", "2026-10-14", ""), ("silicondata", "2026-10-31", "2026-11-01", ""),
-                 ("silicondata", "2026-10-01", "2026-10-30", "stale"), ("ornn", "", "2026-10-15", "unknown_as_of"),
-                 ("semianalysis", "Apr 2026", "2026-10-13", "stale"), ("ornn", "2026-10-09", "2026-10-12", "")]
+        cases = [("silicondata", "2026-10-31", "2026-11-01", ""), ("silicondata", "2026-10-01", "2026-10-30", "stale"),
+                 ("ornn", "", "2026-10-15", "unknown_as_of"), ("ornn", "Apr 2026", "2026-10-15", "unknown_as_of"),
+                 ("ornn", "2026-10-09", "2026-10-12", "")]
         for src, as_of, day, want in cases:
             with self.subTest(src=src, as_of=as_of, day=day):
                 self.assertEqual(report.status(src, {"as_of": as_of}, day), want)
